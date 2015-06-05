@@ -39,6 +39,7 @@ int main ( int argc, char *argv[] )
     int ret;
     if(argc!=2)
         ERR_EXIT("参数个数不对");
+
     ret = myftw(argv[1],myfunc);
     ntot = nreg + ndir + nblk + nchr + nfifo + nslink + nsock;
     if(ntot==0)
@@ -50,7 +51,7 @@ int main ( int argc, char *argv[] )
     printf("fifos         = %7ld, %5.2f %%\n",nfifo,nfifo*100.0/ntot);
     printf("symbolic links = %7ld, %5.2f %%\n",nslink,nslink*100.0/ntot);
     printf("sockets       = %7ld, %5.2f %%\n",nsock,nsock*100.0/ntot);
-    return EXIT_SUCCESS;
+    exit(ret);
 }				/* ----------  end of function main  ---------- */
 
 #define FTW_F 1
@@ -87,11 +88,67 @@ static int dopath(Myfunc *func){
     struct dirent *dirp;
     DIR * dp;
     int ret,n;
-    if(lstat(fullpath,&statpath)<0)
+    if( lstat(fullpath,&statbuf) < 0)
         return(func(fullpath,&statbuf,FTW_NS));
     if(S_ISDIR(statbuf.st_mode) == 0)
         return(func(fullpath,&statbuf,FTW_F));
     if((ret = func(fullpath,&statbuf,FTW_D))!=0)
         return(ret);
+    n =strlen(fullpath);
+    if((n+NAME_MAX +2) > pathlen){
+        pathlen*=2;
+        if((fullpath = realloc(fullpath,pathlen))==NULL)
+            ERR_EXIT("realloc error");
+    }
+    fullpath[n++]='/';
+    fullpath[n] = 0;
+    if((dp = opendir(fullpath))==NULL )
+        return(func(fullpath,&statbuf,FTW_DNR));
+    while((dirp = readdir(dp))!=NULL){
+        if((strcmp(dirp->d_name,".")==0) || (strcmp(dirp->d_name,"..")==0))
+            continue;
+        strcpy(&fullpath[n],dirp->d_name);
+        if((ret = dopath(func))!=0)
+            break;
+    }
+    fullpath[n-1]=0; 
+    printf("dopath %s\n",fullpath);
+    if(closedir(dp)<0)
+        ERR_EXIT("closedir error");
+    return(ret);
 }
 
+/* 
+ * ===  FUNCTION  ======================================================================
+ *         Name:  myfunc
+ *  Description:  
+ * =====================================================================================
+ */
+
+static int myfunc (const char *pathname,const struct stat *statptr,int type)
+{
+    switch(type){
+        case FTW_F:
+            switch(statptr->st_mode & S_IFMT){
+                case S_IFREG: nreg++;break;
+                case S_IFBLK: nblk++;break;
+                case S_IFCHR: nchr++;break;
+                case S_IFIFO: nfifo++;break;
+                case S_IFLNK: nslink++;break;
+                case S_IFSOCK: nsock++;break;
+                case S_IFDIR: printf("for S_IFDIR for %s",pathname);break;
+            }
+            break;
+        case FTW_D:
+            ndir++;break;
+        case FTW_DNR:
+            printf("can't read dir %s\n",pathname);
+            break;
+        case FTW_NS:
+            printf("stat error for %s\n",pathname);
+            break;
+        default:
+            printf("unknown type %d for pathname %s\n",type,pathname);
+    }
+    return 0;
+}		/* -----  end of function myfunc  ----- */
